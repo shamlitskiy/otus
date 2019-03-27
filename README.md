@@ -1,15 +1,4 @@
 # otus
 Python Developer Course
 
-Structure of the repo:
-
-homeworks/
-  │
-  └─ hw1/
-  │
-  └─ hw2/
-  .
-  .
-  .
-  │
-  └─ hw{n}/
+Files to verify would be stored in 'homeworks' ('hw1', 'hw2', etc..).
