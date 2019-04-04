@@ -21,10 +21,11 @@ config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "FILE_PATTERN": "nginx-access-ui.log-*",
-    "DATE_FORMAT": "%Y%m%d",
-    "REPORT_TEMPLATE": "report.html",
 }
+
+DATE_FORMAT = "%Y%m%d"
+REPORT_TEMPLATE = "report.html"
+FILE_PATTERN = "nginx-access-ui.log-*"
 
 
 def init_config(config_path, default):
@@ -50,9 +51,9 @@ def _get_config_from_file(config_path):
     sys.exit()
 
 
-def find_file(file_pattern, file_dir):
+def find_file(file_dir):
     for path, dirs, files in os.walk(file_dir):
-        for name in fnmatch.filter(files, file_pattern):
+        for name in fnmatch.filter(files, FILE_PATTERN):
             yield os.path.join(path, name)
 
 
@@ -61,7 +62,7 @@ def _file_dates(filenames):
     for name in filenames:
         found = data_pattern.match(name)
         if found:
-            log_date = dt.strptime(found.group('log_date'), config['DATE_FORMAT'])
+            log_date = dt.strptime(found.group('log_date'), DATE_FORMAT)
             yield {'name': name, 'log_date': log_date}
 
 
@@ -133,9 +134,7 @@ def url_count(urls):
             break
         counter[r['request']] += 1
     for s, c in counter.iteritems():
-        urls[s].update({
-            'count': c
-        })
+        urls[s].update({'count': c})
 
 
 @consumer
@@ -147,13 +146,19 @@ def url_request_time(urls):
             break
         summer[r['request']] += r['request_time']
     for s, c in summer.iteritems():
-        urls[s].update({
-            'time_sum': c
-        })
+        urls[s].update({'time_sum': c})
+
+
+def percent(count, total):
+        return count * 100.0 / total
+
+
+def avg(summ, total):
+    return summ / total
 
 
 @consumer
-def perc_url_count(urls):
+def urls_total_count(urls):
     total = 0
     while True:
         r = (yield)
@@ -161,15 +166,13 @@ def perc_url_count(urls):
             break
         total += 1
     for url, val in urls.iteritems():
-        count_url = val['count']
-        percent = count_url * 100.0 / total
         urls[url].update({
-            'count_perc': percent
+            'count_perc': percent(val['count'], total)
         })
 
 
 @consumer
-def perc_request_time(urls):
+def total_request_time(urls):
     total = 0
     while True:
         r = (yield)
@@ -177,44 +180,23 @@ def perc_request_time(urls):
             break
         total += r['request_time']
     for url, val in urls.iteritems():
-        time_url = val['time_sum']
-        percent = time_url * 100.0 / total
+        time_summ = val['time_sum']
         urls[url].update({
-            'time_perc': percent
-        })
-
-
-@consumer
-def calculate_time_avg(urls):
-    total = 0
-    while True:
-        r = (yield)
-        if r is None:
-            break
-        total += r['request_time']
-    for url, val in urls.iteritems():
-        time_url = val['time_sum']
-        avg = time_url / total
-        urls[url].update({
-            'time_avg': avg
+            'time_perc': percent(time_summ, total),
+            'time_avg': avg(time_summ, total)
         })
 
 
 @consumer
 def calculate_time_max(urls):
-    max_timer = collections.defaultdict(int)
+    max_time = collections.defaultdict(int)
     while True:
         r = (yield)
         if r is None:
             break
-        max_timer[r['request']] = max([
-            max_timer.get(r['request'], 0),
-            r['request_time']
-        ])
-    for s, c in max_timer.iteritems():
-        urls[s].update({
-            'time_max': c
-        })
+        max_time[r['request']] = max([max_time.get(r['request'], 0), r['request_time']])
+    for s, c in max_time.iteritems():
+        urls[s].update({'time_max': c})
 
 
 def calculate_time_med():
@@ -231,7 +213,6 @@ def save_report_file():
 
 def main(_config):
     file_names = find_file(
-        _config['FILE_PATTERN'],
         _config['LOG_DIR']
     )
     last_log = get_latest_log(file_names)
@@ -242,9 +223,7 @@ def main(_config):
     func_list = [
         url_count(urls),
         url_request_time(urls),
-        perc_url_count(urls),
-        perc_request_time(urls),
-        calculate_time_avg(urls),
+        total_request_time(urls),
         calculate_time_max(urls),
     ]
     broadcast(line_dict, func_list)
