@@ -15,16 +15,18 @@ import fnmatch
 import gzip
 import re
 import collections
+import itertools
+from string import Template
 
 
 config = {
-    "REPORT_SIZE": 1000,
+    "REPORT_SIZE": 10,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
 }
 
 DATE_FORMAT = "%Y%m%d"
-REPORT_TEMPLATE = "report.html"
+REPORT_TEMPLATE = "./static/report.html"
 FILE_PATTERN = "nginx-access-ui.log-*"
 
 
@@ -67,7 +69,7 @@ def _file_dates(filenames):
 
 
 def get_latest_log(file_names):
-    list_files = list(_file_dates(file_names))
+    list_files = tuple(_file_dates(file_names))
     return max(list_files, key=lambda x: x['log_date'])
 
 
@@ -125,8 +127,29 @@ def consumer(func):
     return start
 
 
+def percent(count, total):
+        return count * 100.0 / total
+
+
+def avg(summ, total):
+    return summ / total
+
+
+def median(values_list):
+        n = len(values_list)
+        if n < 1:
+            return None
+        if n % 2 == 1:
+            central_value = n // 2
+            return sorted(values_list)[central_value]
+        else:
+            left_central_val = n // 2 - 1
+            right_central_val = n // 2 + 1
+            return sum(sorted(values_list)[left_central_val:right_central_val]) / 2.0
+
+
 @consumer
-def url_count(urls):
+def count_url(urls):
     counter = collections.defaultdict(int)
     while True:
         r = (yield)
@@ -138,7 +161,7 @@ def url_count(urls):
 
 
 @consumer
-def url_request_time(urls):
+def count_request_time(urls):
     summer = collections.defaultdict(int)
     while True:
         r = (yield)
@@ -149,16 +172,8 @@ def url_request_time(urls):
         urls[s].update({'time_sum': c})
 
 
-def percent(count, total):
-        return count * 100.0 / total
-
-
-def avg(summ, total):
-    return summ / total
-
-
 @consumer
-def urls_total_count(urls):
+def perc_urls(urls):
     total = 0
     while True:
         r = (yield)
@@ -172,7 +187,7 @@ def urls_total_count(urls):
 
 
 @consumer
-def total_request_time(urls):
+def perc_request_time(urls):
     total = 0
     while True:
         r = (yield)
@@ -180,35 +195,85 @@ def total_request_time(urls):
             break
         total += r['request_time']
     for url, val in urls.iteritems():
-        time_summ = val['time_sum']
+        time_summ = val.get('time_sum', 0)
         urls[url].update({
             'time_perc': percent(time_summ, total),
+        })
+
+
+@consumer
+def avg_request_time(urls):
+    total = 0
+    while True:
+        r = (yield)
+        if r is None:
+            break
+        total += r['request_time']
+    for url, val in urls.iteritems():
+        time_summ = val.get('time_sum', 0)
+        urls[url].update({
             'time_avg': avg(time_summ, total)
         })
 
 
 @consumer
 def calculate_time_max(urls):
-    max_time = collections.defaultdict(int)
+    time_max = collections.defaultdict(int)
     while True:
         r = (yield)
         if r is None:
             break
-        max_time[r['request']] = max([max_time.get(r['request'], 0), r['request_time']])
-    for s, c in max_time.iteritems():
-        urls[s].update({'time_max': c})
+        time_max[r['request']] = max([time_max.get(r['request'], 0), r['request_time']])
+    for url, t in time_max.iteritems():
+        urls[url].update({'time_max': t})
 
 
-def calculate_time_med():
-    pass
+@consumer
+def calculate_time_med(urls):
+    time_med = collections.defaultdict(list)
+    while True:
+        r = (yield)
+        if r is None:
+            break
+        time_med[r['request']].append(r['request_time'])
+    for url, t in time_med.iteritems():
+        urls[url].update({
+            'time_med': median(t)
+        })
 
 
-def create_report():
-    pass
+def take(n, iterable):
+    "Return first n items of the iterable as a list"
+    return list(itertools.islice(iterable, n))
 
 
-def save_report_file():
-    pass
+def prepare_data(data, data_size):
+    result_data = []
+    for c, v in data.iteritems():
+        result_data.append({
+            'url': c,
+            'count': v['count'],
+            'count_perc': v['count_perc'],
+            'time_sum': v['time_sum'],
+            'time_perc': v['time_perc'],
+            'time_max': v['time_max'],
+            'time_avg': v['time_avg'],
+            'time_med': v['time_med'],
+        })
+    result_data = take(data_size, result_data)
+    result_data = json.dumps(result_data)
+    return result_data
+
+
+def create_report(report_data, report_dir, report_template):
+    with open(report_template, 'r') as rprt:
+        templ = rprt.read()
+    data_to_load = templ.replace('$table_json', report_data)
+    if not os.path.exists(report_dir):
+        os.makedirs(report_dir)
+    report = os.path.join(report_dir, '20190407-report.html')
+    with open(report, 'w') as rprt:
+        rprt.write(data_to_load)
 
 
 def main(_config):
@@ -218,21 +283,24 @@ def main(_config):
     last_log = get_latest_log(file_names)
     opened_file = file_open(last_log['name'])
     data = get_data(opened_file)
-    line_dict = process_line(data)
-    urls = collections.defaultdict(dict)
+    log_line_dict = process_line(data)
+    urls_stats = collections.defaultdict(dict)
     func_list = [
-        url_count(urls),
-        url_request_time(urls),
-        total_request_time(urls),
-        calculate_time_max(urls),
+        count_url(urls_stats),
+        count_request_time(urls_stats),
+        perc_urls(urls_stats),
+        perc_request_time(urls_stats),
+        avg_request_time(urls_stats),
+        calculate_time_max(urls_stats),
+        calculate_time_med(urls_stats),
     ]
-    broadcast(line_dict, func_list)
-
-    report_file = os.path.join(_config['REPORT_DIR'], 'report_file_1')
-
-    for k, v in urls.iteritems():
-        print('{}: {}'.format(k, v))
-    print('!')
+    broadcast(log_line_dict, func_list)
+    data_to_load = prepare_data(urls_stats, _config['REPORT_SIZE'])
+    create_report(
+        data_to_load,
+        _config['REPORT_DIR'],
+        REPORT_TEMPLATE
+    )
 
 
 if __name__ == "__main__":
