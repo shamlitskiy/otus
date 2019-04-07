@@ -8,13 +8,12 @@
 
 from datetime import datetime as dt
 import os
-import sys
 import argparse
 import json
-import fnmatch
 import gzip
 import re
 import collections
+import logging
 from string import Template
 
 
@@ -22,6 +21,7 @@ config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
+    "LOGGING_FILE": "./log_analyzer.log",
 }
 
 DATE_FORMAT = "%Y%m%d"
@@ -30,6 +30,8 @@ FILE_PATTERN = "nginx-access-ui.log-*"
 
 CURRENT_DATE = dt.now().strftime('%Y.%m.%d')
 REPORT_FILE = 'report-{}.html'.format(CURRENT_DATE)
+LOGGING_FORMAT = '[%(asctime)s] %(levelname).1s %(message)s'
+LOGGING_DATE_FORMAT = '%Y.%m.%d %H:%M:%S'
 
 
 def init_config(config_path, default):
@@ -52,6 +54,7 @@ def _get_config_from_file(config_path):
         msg = ('{}: {}'.format(e.strerror, e.filename))
     except ValueError:
         msg = 'Wrong JSON'
+    logging.error(msg)
     raise IOError(msg)
 
 
@@ -266,20 +269,26 @@ def save_to_file(report_data, report_dir):
 
 
 def main(_config):
+    logging.basicConfig(
+        file_name=_config['LOGGING_FILE'],
+        format=LOGGING_FORMAT,
+        level=logging.INFO
+    )
+
     log_dir = _config['LOG_DIR']
     if not log_dir_exists(log_dir):
-        print("Log dir don't exist.")
+        logging.info("Log dir don't exist.")
         return
 
     report_size = _config['REPORT_SIZE']
     report_dir = _config['REPORT_DIR']
     if report_file_exists(report_dir):
-        print('Report file exists.')
+        logging.info('Report file exists.')
         return
 
     file_names = find_file(log_dir)
     if not file_names:
-        print('Log dir are empty.')
+        logging.info('Log dir are empty.')
         return
 
     last_log = get_latest_log(file_names)
