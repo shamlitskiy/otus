@@ -49,13 +49,13 @@ def _get_config_from_file(config_path):
             config_dict = json.load(cfg)
         return config_dict
     except IOError as e:
-        print ('{}: {}'.format(e.strerror, e.filename))
+        msg = ('{}: {}'.format(e.strerror, e.filename))
     except ValueError:
-        print ('Wrong JSON')
-    sys.exit()
+        msg = 'Wrong JSON'
+    raise IOError(msg)
 
 
-def _report_file_exists(report_dir):
+def report_file_exists(report_dir):
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
         return False
@@ -69,10 +69,16 @@ def _get_template(report_template):
     return _template
 
 
+def log_dir_exists(log_dir):
+    return os.path.exists(log_dir)
+
+
 def find_file(file_dir):
+    file_pattern = re.compile(r'nginx-access-ui[.]log-[0-9]+($|[.]gz$)')
     for path, dirs, files in os.walk(file_dir):
-        for name in fnmatch.filter(files, FILE_PATTERN):
-            yield os.path.join(path, name)
+        for name in files:
+            if file_pattern.match(name):
+                yield os.path.join(path, name)
 
 
 def _file_dates(filenames):
@@ -261,13 +267,19 @@ def save_to_file(report_data, report_dir):
 
 def main(_config):
     log_dir = _config['LOG_DIR']
+    if not log_dir_exists(log_dir):
+        print("Log dir don't exist.")
+        return
+
     report_size = _config['REPORT_SIZE']
     report_dir = _config['REPORT_DIR']
-    if _report_file_exists(report_dir):
+    if report_file_exists(report_dir):
+        print('Report file exists.')
         return
 
     file_names = find_file(log_dir)
     if not file_names:
+        print('Log dir are empty.')
         return
 
     last_log = get_latest_log(file_names)
