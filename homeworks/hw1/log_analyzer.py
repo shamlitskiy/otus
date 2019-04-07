@@ -15,12 +15,11 @@ import fnmatch
 import gzip
 import re
 import collections
-import itertools
 from string import Template
 
 
 config = {
-    "REPORT_SIZE": 10,
+    "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
 }
@@ -28,6 +27,9 @@ config = {
 DATE_FORMAT = "%Y%m%d"
 REPORT_TEMPLATE = "./static/report.html"
 FILE_PATTERN = "nginx-access-ui.log-*"
+
+CURRENT_DATE = dt.now().strftime(DATE_FORMAT)
+REPORT_FILE = '{}-report.html'.format(CURRENT_DATE)
 
 
 def init_config(config_path, default):
@@ -53,6 +55,20 @@ def _get_config_from_file(config_path):
     sys.exit()
 
 
+def _report_file_exists(report_dir):
+    if not os.path.exists(report_dir):
+        os.makedirs(report_dir)
+        return False
+    report_file_dir = os.path.join(report_dir, REPORT_FILE)
+    return os.path.exists(report_file_dir)
+
+
+def _get_template(report_template):
+    with open(report_template, 'r') as rprt:
+        _template = rprt.read()
+    return _template
+
+
 def find_file(file_dir):
     for path, dirs, files in os.walk(file_dir):
         for name in fnmatch.filter(files, FILE_PATTERN):
@@ -70,7 +86,8 @@ def _file_dates(filenames):
 
 def get_latest_log(file_names):
     list_files = tuple(_file_dates(file_names))
-    return max(list_files, key=lambda x: x['log_date'])
+    latest_log = max(list_files, key=lambda x: x['log_date'])
+    return latest_log['name']
 
 
 def file_open(filename):
@@ -242,14 +259,16 @@ def calculate_time_med(urls):
         })
 
 
-def take(n, iterable):
-    "Return first n items of the iterable as a list"
-    return list(itertools.islice(iterable, n))
+def _float_to_str(fl_val):
+    return '{:.3f}'.format(fl_val)
 
 
 def prepare_data(data, data_size):
     result_data = []
     for c, v in data.iteritems():
+        for k in v:
+            v[k] = _float_to_str(v[k])
+
         result_data.append({
             'url': c,
             'count': v['count'],
@@ -260,32 +279,41 @@ def prepare_data(data, data_size):
             'time_avg': v['time_avg'],
             'time_med': v['time_med'],
         })
-    result_data = take(data_size, result_data)
+    result_data = sorted(result_data, key=lambda x: x['time_sum'], reverse=True)
+    result_data = result_data[:data_size]
     result_data = json.dumps(result_data)
     return result_data
 
 
-def create_report(report_data, report_dir, report_template):
-    with open(report_template, 'r') as rprt:
-        templ = rprt.read()
-    data_to_load = templ.replace('$table_json', report_data)
-    if not os.path.exists(report_dir):
-        os.makedirs(report_dir)
-    report = os.path.join(report_dir, '20190407-report.html')
+def save_to_file(report_data, report_dir):
+    report = os.path.join(report_dir, REPORT_FILE)
+
     with open(report, 'w') as rprt:
-        rprt.write(data_to_load)
+        rprt.write(report_data)
+
+
+def create_report(report_data, report_template):
+    s = Template(_get_template(report_template))
+    data_to_load = s.safe_substitute(table_json=report_data)
+    return data_to_load
 
 
 def main(_config):
-    file_names = find_file(
-        _config['LOG_DIR']
-    )
+    log_dir = _config['LOG_DIR']
+    report_size = _config['REPORT_SIZE']
+    report_dir = _config['REPORT_DIR']
+
+    if _report_file_exists(report_dir):
+        pass
+
+    file_names = find_file(log_dir)
     last_log = get_latest_log(file_names)
-    opened_file = file_open(last_log['name'])
+    opened_file = file_open(last_log)
     data = get_data(opened_file)
     log_line_dict = process_line(data)
+
     urls_stats = collections.defaultdict(dict)
-    func_list = [
+    funcs_list = [
         count_url(urls_stats),
         count_request_time(urls_stats),
         perc_urls(urls_stats),
@@ -294,13 +322,11 @@ def main(_config):
         calculate_time_max(urls_stats),
         calculate_time_med(urls_stats),
     ]
-    broadcast(log_line_dict, func_list)
-    data_to_load = prepare_data(urls_stats, _config['REPORT_SIZE'])
-    create_report(
-        data_to_load,
-        _config['REPORT_DIR'],
-        REPORT_TEMPLATE
-    )
+    broadcast(log_line_dict, funcs_list)
+
+    data_to_load = prepare_data(urls_stats, report_size)
+    report = create_report(data_to_load, REPORT_TEMPLATE)
+    save_to_file(report, report_dir)
 
 
 if __name__ == "__main__":
