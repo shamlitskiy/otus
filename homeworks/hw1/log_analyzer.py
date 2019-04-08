@@ -50,12 +50,9 @@ def _get_config_from_file(config_path):
         with open(config_path, 'r') as cfg:
             config_dict = json.load(cfg)
         return config_dict
-    except IOError as e:
-        msg = ('{}: {}'.format(e.strerror, e.filename))
-    except ValueError:
-        msg = 'Wrong JSON'
-    logging.error(msg)
-    raise IOError(msg)
+    except Exception as e:
+        msg = ('{}: {}'.format(e.args, e.message))
+        raise IOError(msg)
 
 
 def report_file_exists(report_dir):
@@ -268,27 +265,22 @@ def save_to_file(report_data, report_dir):
         rprt.write(report_data)
 
 
-def main(_config):
-    logging.basicConfig(
-        file_name=_config['LOGGING_FILE'],
-        format=LOGGING_FORMAT,
-        level=logging.INFO
-    )
+def main(_config, _logging):
 
     log_dir = _config['LOG_DIR']
     if not log_dir_exists(log_dir):
-        logging.info("Log dir don't exist.")
+        _logging.info("Log dir don't exist.")
         return
 
     report_size = _config['REPORT_SIZE']
     report_dir = _config['REPORT_DIR']
     if report_file_exists(report_dir):
-        logging.info('Report file exists.')
+        _logging.info('Report file already exists.')
         return
 
     file_names = find_file(log_dir)
     if not file_names:
-        logging.info('Log dir are empty.')
+        _logging.info('Log dir are empty.')
         return
 
     last_log = get_latest_log(file_names)
@@ -310,4 +302,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg = init_config(config_path=args.config, default=config)
-    main(_config=cfg)
+
+    logging.basicConfig(
+        filename=cfg['LOGGING_FILE'] if cfg['LOGGING_FILE'] else None,
+        format=LOGGING_FORMAT,
+        datefmt=LOGGING_DATE_FORMAT,
+        level=logging.INFO
+    )
+    try:
+        main(_config=cfg, _logging=logging)
+    except Exception as e:
+        logging.exception('main function exception.')
