@@ -22,7 +22,7 @@ from string import Template
 config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
-    "LOG_DIR": "/Users/alex/PycharmProjects/otus/playground/homework_1/log",
+    "LOG_DIR": "./log",
     "LOGGING_FILE": "./log_analyzer.log",
 }
 
