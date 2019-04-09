@@ -8,6 +8,7 @@
 
 from datetime import datetime as dt
 import os
+import sys
 import argparse
 import json
 import gzip
@@ -32,6 +33,10 @@ CURRENT_DATE = dt.now().strftime('%Y.%m.%d')
 REPORT_FILE = 'report-{}.html'.format(CURRENT_DATE)
 LOGGING_FORMAT = '[%(asctime)s] %(levelname).1s %(message)s'
 LOGGING_DATE_FORMAT = '%Y.%m.%d %H:%M:%S'
+
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    logging.exception('Uncaught exception: {}'.format(exc_value.message))
 
 
 def init_config(config_path, default):
@@ -265,22 +270,36 @@ def save_to_file(report_data, report_dir):
         rprt.write(report_data)
 
 
-def main(_config, _logging):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config',
+                        help='path to config file')
+    args = parser.parse_args()
 
-    log_dir = _config['LOG_DIR']
+    cfg = init_config(config_path=args.config, default=config)
+
+    logging.basicConfig(
+        filename=cfg['LOGGING_FILE'] if cfg['LOGGING_FILE'] else None,
+        format=LOGGING_FORMAT,
+        datefmt=LOGGING_DATE_FORMAT,
+        level=logging.INFO
+    )
+    sys.excepthook = handle_exception
+
+    log_dir = cfg['LOG_DIR']
     if not log_dir_exists(log_dir):
-        _logging.info("Log dir don't exist.")
+        logging.info("Log dir don't exist.")
         return
 
-    report_size = _config['REPORT_SIZE']
-    report_dir = _config['REPORT_DIR']
+    report_size = cfg['REPORT_SIZE']
+    report_dir = cfg['REPORT_DIR']
     if report_file_exists(report_dir):
-        _logging.info('Report file already exists.')
+        logging.info('Report file already exists.')
         return
 
     file_names = find_file(log_dir)
     if not file_names:
-        _logging.info('Log dir are empty.')
+        logging.info('Log dir are empty.')
         return
 
     last_log = get_latest_log(file_names)
@@ -296,20 +315,4 @@ def main(_config, _logging):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config',
-                        help='path to config file')
-    args = parser.parse_args()
-
-    cfg = init_config(config_path=args.config, default=config)
-
-    logging.basicConfig(
-        filename=cfg['LOGGING_FILE'] if cfg['LOGGING_FILE'] else None,
-        format=LOGGING_FORMAT,
-        datefmt=LOGGING_DATE_FORMAT,
-        level=logging.INFO
-    )
-    try:
-        main(_config=cfg, _logging=logging)
-    except Exception as e:
-        logging.exception('main function exception.')
+    main()
