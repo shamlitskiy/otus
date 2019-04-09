@@ -9,6 +9,7 @@
 from datetime import datetime as dt
 import os
 import sys
+import traceback
 import argparse
 import json
 import gzip
@@ -21,7 +22,7 @@ from string import Template
 config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
-    "LOG_DIR": "./log",
+    "LOG_DIR": "/Users/alex/PycharmProjects/otus/playground/homework_1/log",
     "LOGGING_FILE": "./log_analyzer.log",
 }
 
@@ -36,7 +37,8 @@ LOGGING_DATE_FORMAT = '%Y.%m.%d %H:%M:%S'
 
 
 def handle_exception(exc_type, exc_value, exc_traceback):
-    logging.exception('Uncaught exception: {}'.format(exc_value.message))
+    traceback_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    logging.exception('Uncaught exception.\n{}'.format(traceback_msg))
 
 
 def init_config(config_path, default):
@@ -56,7 +58,7 @@ def _get_config_from_file(config_path):
             config_dict = json.load(cfg)
         return config_dict
     except Exception as e:
-        msg = ('{}: {}'.format(e.args, e.message))
+        msg = ('Config file error: {}'.format(e.message))
         raise IOError(msg)
 
 
