@@ -89,7 +89,7 @@ def get_file_names(file_dir):
                 yield (os.path.join(path, name), log_date)
 
 
-def get_data(file_name):
+def get_lines(file_name):
     if file_name.endswith(".gz"):
         _file = gzip.open(file_name)
     else:
@@ -273,8 +273,8 @@ def main(_config, _logging):
         return
 
     last_log, date_log = max(file_names, key=lambda x: x[1])
-    file_data = get_data(last_log)
-    log_line_dict = process_line(file_data)
+    file_line = get_lines(last_log)
+    log_line_dict = process_line(file_line)
 
     urls_stats = calculate_urls_stats(log_line_dict)
 
