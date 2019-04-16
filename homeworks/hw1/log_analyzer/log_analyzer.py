@@ -5,7 +5,7 @@
 #                     '$status $body_bytes_sent "$http_referer" '
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
 #                     '$request_time';
-
+from __future__ import unicode_literals
 from datetime import datetime as dt
 import os
 import sys
@@ -30,15 +30,10 @@ DATE_FORMAT = "%Y%m%d"
 REPORT_TEMPLATE = "./static/report.html"
 FILE_PATTERN = "nginx-access-ui.log-*"
 
-CURRENT_DATE = dt.now().strftime('%Y.%m.%d')
-REPORT_FILE = 'report-{}.html'.format(CURRENT_DATE)
+REPORT_DATE_FORMAT = '%Y.%m.%d'
+REPORT_FILE = 'report-{}.html'
 LOGGING_FORMAT = '[%(asctime)s] %(levelname).1s %(message)s'
 LOGGING_DATE_FORMAT = '%Y.%m.%d %H:%M:%S'
-
-
-def handle_exception(exc_type, exc_value, exc_traceback):
-    traceback_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-    logging.exception('Uncaught exception.\n{}'.format(traceback_msg))
 
 
 def init_config(config_path, default):
@@ -46,7 +41,9 @@ def init_config(config_path, default):
     if config_path:
         _config = _get_config_from_file(config_path)
         for cfg_key in default:
-            result_config[cfg_key] = _config.get(cfg_key, default[cfg_key])
+            result_config.update({
+                cfg_key: _config.get(cfg_key, default.get(cfg_key))
+            })
     else:
         result_config = default
     return result_config
@@ -57,7 +54,9 @@ def _get_config_from_file(config_path):
         with open(config_path, 'r') as cfg:
             config_dict = json.load(cfg)
         return config_dict
-    except Exception as e:
+    except ValueError:
+        return {}
+    except IOError as e:
         msg = ('Config file error: {}'.format(e.message))
         raise IOError(msg)
 
@@ -80,43 +79,24 @@ def log_dir_exists(log_dir):
     return os.path.exists(log_dir)
 
 
-def find_file(file_dir):
-    file_pattern = re.compile(r'nginx-access-ui[.]log-[0-9]+($|[.]gz$)')
+def get_file_names(file_dir):
+    file_pattern = re.compile(r'nginx-access-ui[.]log-(?P<log_date>\d{8})($|[.]gz$)')
     for path, dirs, files in os.walk(file_dir):
         for name in files:
-            if file_pattern.match(name):
-                yield os.path.join(path, name)
-
-
-def _file_dates(filenames):
-    data_pattern = re.compile(r'.*-(?P<log_date>\d{8}).*')
-    for name in filenames:
-        found = data_pattern.match(name)
-        if found:
-            log_date = dt.strptime(found.group('log_date'), DATE_FORMAT)
-            yield {'name': name, 'log_date': log_date}
-
-
-def get_latest_log(file_names):
-    list_files = tuple(_file_dates(file_names))
-    if list_files:
-        latest_log = max(list_files, key=lambda x: x['log_date'])
-        return latest_log['name']
-    else:
-        return None
-
-
-def file_open(filename):
-    if filename.endswith(".gz"):
-        yield gzip.open(filename)
-    else:
-        yield open(filename)
+            found = file_pattern.match(name)
+            if found:
+                log_date = dt.strptime(found.group('log_date'), DATE_FORMAT)
+                yield (os.path.join(path, name), log_date)
 
 
 def get_data(file_name):
-    for s in file_name:
-        for item in s:
-            yield item
+    if file_name.endswith(".gz"):
+        _file = gzip.open(file_name)
+    else:
+        _file = open(file_name)
+
+    for item in _file:
+        yield item
 
 
 def process_line(log_line):
@@ -266,16 +246,48 @@ def create_report(report_data, report_template):
     return data_to_load
 
 
-def save_to_file(report_data, report_dir):
-    report = os.path.join(report_dir, REPORT_FILE)
+def save_to_file(report_data, report_date, report_dir):
+    report_date = report_date.strftime(REPORT_DATE_FORMAT)
+    report_file_name = REPORT_FILE.format(report_date)
+    report = os.path.join(report_dir, report_file_name)
     with open(report, 'w') as rprt:
         rprt.write(report_data)
 
 
-def main():
+def main(_config, _logging):
+    log_dir = _config['LOG_DIR']
+    report_size = _config['REPORT_SIZE']
+    report_dir = _config['REPORT_DIR']
+
+    if not log_dir_exists(log_dir):
+        _logging.info("Log dir don't exist.")
+        return
+
+    if report_file_exists(report_dir):
+        _logging.info('Report file already exists.')
+        return
+
+    file_names = get_file_names(log_dir)
+    if not file_names:
+        _logging.info('Log dir are empty.')
+        return
+
+    last_log, date_log = max(file_names, key=lambda x: x[1])
+    file_data = get_data(last_log)
+    log_line_dict = process_line(file_data)
+
+    urls_stats = calculate_urls_stats(log_line_dict)
+
+    data_to_load = prepare_data(urls_stats, report_size)
+    report = create_report(data_to_load, REPORT_TEMPLATE)
+    save_to_file(report, date_log, report_dir)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--config',
-                        help='path to config file')
+                        help='path to config file',
+                        default='./config')
     args = parser.parse_args()
 
     cfg = init_config(config_path=args.config, default=config)
@@ -286,35 +298,9 @@ def main():
         datefmt=LOGGING_DATE_FORMAT,
         level=logging.INFO
     )
-    sys.excepthook = handle_exception
-
-    log_dir = cfg['LOG_DIR']
-    if not log_dir_exists(log_dir):
-        logging.info("Log dir don't exist.")
-        return
-
-    report_size = cfg['REPORT_SIZE']
-    report_dir = cfg['REPORT_DIR']
-    if report_file_exists(report_dir):
-        logging.info('Report file already exists.')
-        return
-
-    file_names = find_file(log_dir)
-    if not file_names:
-        logging.info('Log dir are empty.')
-        return
-
-    last_log = get_latest_log(file_names)
-    opened_file = file_open(last_log)
-    data = get_data(opened_file)
-    log_line_dict = process_line(data)
-
-    urls_stats = calculate_urls_stats(log_line_dict)
-
-    data_to_load = prepare_data(urls_stats, report_size)
-    report = create_report(data_to_load, REPORT_TEMPLATE)
-    save_to_file(report, report_dir)
-
-
-if __name__ == "__main__":
-    main()
+    try:
+        main(_config=cfg, _logging=logging)
+    except Exception:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        logging.exception('Uncaught exception.\n{}'.format(traceback_msg))
