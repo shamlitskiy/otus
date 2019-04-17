@@ -5,7 +5,6 @@
 #                     '$status $body_bytes_sent "$http_referer" '
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
 #                     '$request_time';
-from __future__ import unicode_literals
 from datetime import datetime as dt
 import os
 import sys
