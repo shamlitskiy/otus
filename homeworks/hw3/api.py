@@ -40,11 +40,18 @@ GENDERS = {
 
 
 class FieldMeta(type):
-    def __new__(cls, name, bases, attrs):
+    def __new__(mcs, name, bases, attrs):
         for n, v in attrs.items():
             if isinstance(v, Field):
                 v.label = n
-        return super(FieldMeta, cls).__new__(cls, name, bases, attrs)
+        return super(FieldMeta, mcs).__new__(mcs, name, bases, attrs)
+
+    def __init__(cls, name, bases, attrs):
+        cls.required_fields = []
+        for n, v in attrs.items():
+            if isinstance(v, Field) and v.required:
+                cls.required_fields.append(n)
+        super(FieldMeta, cls).__init__(name, bases, attrs)
 
 
 class Field(object):
@@ -55,24 +62,45 @@ class Field(object):
         self.nullable = nullable
 
     def __set__(self, obj, val):
-        if self.required and val is None:
-            raise ValueError(
-                'Field {label} is required'.format(label=self.label)
-            )
+        errors = self.check_values(val)
+        if not errors:
+            self.value = val
         else:
-            obj.__dict__[self.label] = val
+            raise ValueError('; '.join(errors))
 
     def __get__(self, obj, owner):
-        return obj.__dict__.get(self.value, None)
+        return self.value
+
+    def check_values(self, val):
+        errors = []
+        errors.extend(self._check_nullable(val))
+        return errors
+
+    def _check_nullable(self, val):
+        if not val and not self.nullable:
+            return [
+                'Field {label} is not nullable'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class CharField(Field):
-    def __set__(self, obj, val):
-        super(CharField, self).__set__(obj, val)
-        if not self.nullable and val == '':
-            raise ValueError(
-                'Field {label} is not nullable'.format(label=self.label)
-            )
+    def __set__(self, *args, **kwargs):
+        super(CharField, self).__set__(*args, **kwargs)
+
+    def check_values(self, val):
+        errors = super(CharField, self).check_values(val)
+        errors.extend(self._check_type(val))
+        return errors
+
+    def _check_type(self, val):
+        if val and not isinstance(val, str):
+            return [
+                'Field {label} should be string'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class ArgumentsField(Field):
@@ -81,33 +109,114 @@ class ArgumentsField(Field):
 
 
 class EmailField(CharField):
-    def __set__(self, *args, **kwargs):
-        super(EmailField, self).__set__(*args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super(EmailField, self).__init__(*args, **kwargs)
+        self.required = False
+        self.nullable = True
+
+    def check_values(self, val):
+        errors = super(EmailField, self).check_values(val)
+        errors.extend(self._check_email(val))
+        return errors
+
+    def _check_email(self, val):
+        if val and '@' not in val:
+            return [
+                'Field {label} should contain `@` symbol'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class PhoneField(Field):
-    def __set__(self, *args, **kwargs):
-        super(PhoneField, self).__set__(*args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super(PhoneField, self).__init__(*args, **kwargs)
+        self.required = False
+        self.nullable = True
+
+    def check_values(self, val):
+        errors = super(PhoneField, self).check_values(val)
+        errors.extend(self._check_type(val))
+        errors.extend(self._check_length(val))
+        errors.extend(self._check_first_char(val))
+        return errors
+
+    def _check_type(self, val):
+        if val and not isinstance(val, (int, str)):
+            return [
+                'Field {label}. Expected string or number'.format(label=self.label)
+            ]
+        else:
+            return []
+
+    def _check_length(self, val):
+        if val and len(val) != 11:
+            return [
+                'Field {label} should be 11 chars length'.format(label=self.label)
+            ]
+        else:
+            return []
+
+    def _check_first_char(self, val):
+        if val and not str(val).startswith('7'):
+            return [
+                'Field {label} should starts with `7`'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class DateField(Field):
-    def __set__(self, *args, **kwargs):
-        super(DateField, self).__set__(*args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super(DateField, self).__init__(*args, **kwargs)
+        self.required = False
+        self.nullable = True
+
+    def check_values(self, val):
+        errors = super(DateField, self).check_values(val)
+        errors.extend(self._check_type(val))
+        errors.extend(self._check_format(val))
+
+    def _check_type(self, val):
+        if val and not isinstance(val, datetime.datetime):
+            return [
+                'Field {label}. Expected `datetime` type.'.format(label=self.label)
+            ]
+        else:
+            return []
+
+    def _check_format(self, val):
+        try:
+            if val:
+                datetime.datetime.strptime(val, '%d.%m.%Y')
+            return []
+        except ValueError:
+            return [
+                'Field {label}. Expected format: DD.MM.YYYY'.format(label=self.label)
+            ]
 
 
-class BirthDayField(Field):
-    def __set__(self, *args, **kwargs):
-        super(BirthDayField, self).__set__(*args, **kwargs)
+class BirthDayField(DateField):
+    def check_values(self, val):
+        errors = super(BirthDayField, self).check_values(val)
+        errors.extend(self._check_date_range(val))
+        return errors
+
+    def _check_date_range(self, val):
+        if val and not str(val).startswith('7'):
+            return [
+                'Field {label}. Age should be lower than 70 years'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class GenderField(Field):
-    def __set__(self, *args, **kwargs):
-        super(GenderField, self).__set__(*args, **kwargs)
+    pass
 
 
 class ClientIDsField(Field):
-    def __set__(self, *args, **kwargs):
-        super(ClientIDsField, self).__set__(*args, **kwargs)
+    pass
 
 
 class ClientsInterestsRequest(object):
@@ -136,6 +245,10 @@ class MethodRequest(object):
     def __init__(self, request):
         self.error = None
         try:
+            for required_field in self.required_fields:
+                if required_field not in request:
+                    raise ValueError('Field {} is required'.format(required_field))
+
             self.account = request.get('account')
             self.login = request.get('login')
             self.token = request.get('token')
@@ -256,8 +369,27 @@ if __name__ == "__main__":
     # except KeyboardInterrupt:
     #     pass
     # server.server_close()
-    # req = {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}}
-    req = {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}}
-    a = MethodRequest(req)
-    res = method_handler(req, 1, 1)
-    print(a.__dict__)
+
+    # req = {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}}
+    # a = MethodRequest(req)
+    # res = method_handler(req, 1, 1)
+
+    req_list = [
+        {"account": "horns&hoofs", "login": "admin",
+         "method": "clients_interests", "token":
+             "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
+             "arguments": {"client_ids": [1, 2, 3, 4], "date": "20.07.2017"}},
+        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
+        # {"login": "h&f", "method": "online_score", "token": "", "arguments": {}},
+        # {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}},
+        # {"account": "horns&hoofs", "login": "h&f", "token": "", "arguments": {}},
+        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "arguments": {}},
+        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", },
+        # {"account": "horns&hoofs", "login": "h&f", "method": "", "token": "", "arguments": {}},
+    ]
+
+    for req in req_list:
+        res = method_handler(req, 1, 1)
+        print res
+
+    print('Done!')
