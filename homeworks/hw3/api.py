@@ -47,10 +47,15 @@ class FieldMeta(type):
         return super(FieldMeta, mcs).__new__(mcs, name, bases, attrs)
 
     def __init__(cls, name, bases, attrs):
+        cls.fields = []
         cls.required_fields = []
+
         for n, v in attrs.items():
             if isinstance(v, Field) and v.required:
-                cls.required_fields.append(n)
+                if v.required:
+                    cls.required_fields.append(n)
+                cls.fields.append(v)
+
         super(FieldMeta, cls).__init__(name, bases, attrs)
 
 
@@ -62,11 +67,12 @@ class Field(object):
         self.nullable = nullable
 
     def __set__(self, obj, val):
+        self.errors = []
         errors = self.check_values(val)
         if not errors:
             self.value = val
         else:
-            raise ValueError('; '.join(errors))
+            self.errors.extend(errors)
 
     def __get__(self, obj, owner):
         return self.value
@@ -86,8 +92,10 @@ class Field(object):
 
 
 class CharField(Field):
-    def __set__(self, *args, **kwargs):
-        super(CharField, self).__set__(*args, **kwargs)
+    def __set__(self, obj, val):
+        if self.nullable:
+            val = val or ''
+        super(CharField, self).__set__(obj, val)
 
     def check_values(self, val):
         errors = super(CharField, self).check_values(val)
@@ -104,8 +112,10 @@ class CharField(Field):
 
 
 class ArgumentsField(Field):
-    def __set__(self, *args, **kwargs):
-        super(ArgumentsField, self).__set__(*args, **kwargs)
+    def __set__(self, obj, val):
+        if self.nullable:
+            val = val or {}
+        super(ArgumentsField, self).__set__(obj, val)
 
 
 class EmailField(CharField):
@@ -176,6 +186,7 @@ class DateField(Field):
         errors = super(DateField, self).check_values(val)
         errors.extend(self._check_type(val))
         errors.extend(self._check_format(val))
+        return errors
 
     def _check_type(self, val):
         if val and not isinstance(val, datetime.datetime):
@@ -223,6 +234,20 @@ class ClientsInterestsRequest(object):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
+    def __init__(self, arguments):
+        self.errors = []
+        self.client_ids = arguments.get('client_ids')
+        self.date = arguments.get('date')
+
+    def response(self, ctx, store):
+        interests = {}
+        for cid in self.client_ids:
+            interests.update({cid: get_interests(
+                store=store,
+                cid=self.client_ids)
+            })
+        return interests
+
 
 class OnlineScoreRequest(object):
     first_name = CharField(required=False, nullable=True)
@@ -232,6 +257,23 @@ class OnlineScoreRequest(object):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
+    def __init__(self, arguments):
+        self.errors = []
+        self.first_name = arguments.get('first_name')
+        self.last_name = arguments.get('last_name')
+        self.email = arguments.get('email')
+        self.phone = arguments.get('phone')
+        self.birthday = arguments.get('birthday')
+        self.gender = arguments.get('gender')
+
+    def response(self, ctx, store):
+        score = get_score(
+            store=store, phone=self.phone, email=self.email,
+            first_name=self.first_name, last_name=self.last_name,
+            birthday=self.birthday, gender=self.gender,
+        )
+        return score
+
 
 class MethodRequest(object):
     __metaclass__ = FieldMeta
@@ -240,26 +282,50 @@ class MethodRequest(object):
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
+    method = CharField(required=True, nullable=True)
 
     def __init__(self, request):
-        self.error = None
-        try:
-            for required_field in self.required_fields:
-                if required_field not in request:
-                    raise ValueError('Field {} is required'.format(required_field))
+        self.errors = []
+        self._check_required_fields(request)
 
-            self.account = request.get('account')
-            self.login = request.get('login')
-            self.token = request.get('token')
-            self.arguments = request.get('arguments')
-            self.method = request.get('method')
-        except ValueError as e:
-            self.error = e.message
+        self.account = request.get('account')
+        self.login = request.get('login')
+        self.token = request.get('token')
+        self.arguments = request.get('arguments')
+        self.method = request.get('method')
+
+        self._check_fields_errors()
+
+    def _check_required_fields(self, request):
+        for required_field in self.required_fields:
+            if required_field not in request:
+                self.errors.extend(['Field {} is required'.format(required_field)])
+
+    def _check_fields_errors(self):
+        for field in self.fields:
+            self.errors.extend(field.errors)
 
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
+
+    def get_response(self, ctx, store):
+        if self.method == 'clients_interests':
+            response_method = ClientsInterestsRequest(self.arguments)
+        elif self.method == 'online_score':
+            response_method = OnlineScoreRequest(self.arguments)
+        else:
+            return NOT_FOUND, ERRORS[NOT_FOUND]
+
+        if response_method.errors:
+            msg = '{error}. {msg}'.format(
+                error=ERRORS[INVALID_REQUEST],
+                msg='; '.join(response_method.errors)
+            )
+            code, response = INVALID_REQUEST, msg
+        else:
+            code, response = OK, response_method.response(ctx, store)
+        return code, response
 
 
 def check_auth(request):
@@ -272,43 +338,19 @@ def check_auth(request):
     return False
 
 
-def online_score(store, phone, email, first_name, last_name, birthday, gender):
-    score = get_score(
-        store=store, phone=phone, email=email,
-        first_name=first_name, last_name=last_name,
-        birthday=birthday, gender=gender,
-    )
-    return score
-
-
-def clients_interests(store, cid):
-    interests = get_interests(
-        store=store, cid=cid
-    )
-    return interests
-
-
 def method_handler(request, ctx, store):
-    code, response = None, None
-    methods_dict = {
-        'online_score': online_score,
-        'clients_interests': clients_interests,
-    }
     method_req = MethodRequest(request)
-    if method_req.error:
+    if method_req.errors:
         msg = '{error}. {msg}'.format(
-            error=ERRORS[BAD_REQUEST],
-            msg=method_req.error
+            error=ERRORS[INVALID_REQUEST],
+            msg='; '.join(method_req.errors)
         )
-        code, response = BAD_REQUEST, msg
+        code, response = INVALID_REQUEST, msg
     elif not check_auth(method_req):
         code, response = FORBIDDEN, ERRORS[FORBIDDEN]
     else:
-        method_to_call = methods_dict[method_req.method]
-        method_args = method_req.arguments
-        code, response = method_to_call(store, **method_args)
-        # code, response = '200', 'Vse norm'
-    return code, response
+        code, response = method_req.get_response(ctx=ctx, store=store)
+    return response, code
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
@@ -375,10 +417,10 @@ if __name__ == "__main__":
     # res = method_handler(req, 1, 1)
 
     req_list = [
-        {"account": "horns&hoofs", "login": "admin",
-         "method": "clients_interests", "token":
-             "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
-             "arguments": {"client_ids": [1, 2, 3, 4], "date": "20.07.2017"}},
+        # {"account": "horns&hoofs", "login": "admin",
+        #  "method": "clients_interests", "token":
+        #      "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
+        #      "arguments": {"client_ids": [1, 2, 3, 4], "date": "20.07.2017"}},
         # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
         # {"login": "h&f", "method": "online_score", "token": "", "arguments": {}},
         # {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}},
@@ -386,10 +428,17 @@ if __name__ == "__main__":
         # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "arguments": {}},
         # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", },
         # {"account": "horns&hoofs", "login": "h&f", "method": "", "token": "", "arguments": {}},
+        # {"account": "horns&hoofs", "login": "h&f", "token": "", "arguments": {}},
+        {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
+        {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "sdd", "arguments": {}},
+        {"account": "horns&hoofs", "login": "admin", "method": "online_score", "token": "", "arguments": {}},
+        {},
     ]
 
     for req in req_list:
+        print(req)
         res = method_handler(req, 1, 1)
         print res
+        print('\n')
 
     print('Done!')
