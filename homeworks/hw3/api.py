@@ -39,28 +39,8 @@ GENDERS = {
 }
 
 
-class FieldMeta(type):
-    def __new__(mcs, name, bases, attrs):
-        for n, v in attrs.items():
-            if isinstance(v, Field):
-                v.label = n
-        return super(FieldMeta, mcs).__new__(mcs, name, bases, attrs)
-
-    def __init__(cls, name, bases, attrs):
-        cls.fields = []
-        cls.required_fields = []
-
-        for n, v in attrs.items():
-            if isinstance(v, Field) and v.required:
-                if v.required:
-                    cls.required_fields.append(n)
-                cls.fields.append(v)
-
-        super(FieldMeta, cls).__init__(name, bases, attrs)
-
-
 class Field(object):
-    def __init__(self, value=None, required=False, nullable=True):
+    def __init__(self, value=None, required=False, nullable=False):
         self.label = None
         self.value = value
         self.required = required
@@ -72,6 +52,7 @@ class Field(object):
         if not errors:
             self.value = val
         else:
+            self.value = None
             self.errors.extend(errors)
 
     def __get__(self, obj, owner):
@@ -92,11 +73,6 @@ class Field(object):
 
 
 class CharField(Field):
-    def __set__(self, obj, val):
-        if self.nullable:
-            val = val or ''
-        super(CharField, self).__set__(obj, val)
-
     def check_values(self, val):
         errors = super(CharField, self).check_values(val)
         errors.extend(self._check_type(val))
@@ -112,18 +88,21 @@ class CharField(Field):
 
 
 class ArgumentsField(Field):
-    def __set__(self, obj, val):
-        if self.nullable:
-            val = val or {}
-        super(ArgumentsField, self).__set__(obj, val)
+    def check_values(self, val):
+        errors = super(ArgumentsField, self).check_values(val)
+        errors.extend(self._check_type(val))
+        return errors
+
+    def _check_type(self, val):
+        if val and not isinstance(val, dict):
+            return [
+                'Field {label} should be dict'.format(label=self.label)
+            ]
+        else:
+            return []
 
 
 class EmailField(CharField):
-    def __init__(self, *args, **kwargs):
-        super(EmailField, self).__init__(*args, **kwargs)
-        self.required = False
-        self.nullable = True
-
     def check_values(self, val):
         errors = super(EmailField, self).check_values(val)
         errors.extend(self._check_email(val))
@@ -139,11 +118,6 @@ class EmailField(CharField):
 
 
 class PhoneField(Field):
-    def __init__(self, *args, **kwargs):
-        super(PhoneField, self).__init__(*args, **kwargs)
-        self.required = False
-        self.nullable = True
-
     def check_values(self, val):
         errors = super(PhoneField, self).check_values(val)
         errors.extend(self._check_type(val))
@@ -177,33 +151,19 @@ class PhoneField(Field):
 
 
 class DateField(Field):
-    def __init__(self, *args, **kwargs):
-        super(DateField, self).__init__(*args, **kwargs)
-        self.required = False
-        self.nullable = True
-
     def check_values(self, val):
         errors = super(DateField, self).check_values(val)
-        errors.extend(self._check_type(val))
-        errors.extend(self._check_format(val))
+        errors.extend(self._check_date_format(val))
         return errors
 
-    def _check_type(self, val):
-        if val and not isinstance(val, datetime.datetime):
-            return [
-                'Field {label}. Expected `datetime` type.'.format(label=self.label)
-            ]
-        else:
-            return []
-
-    def _check_format(self, val):
+    def _check_date_format(self, val):
         try:
             if val:
                 datetime.datetime.strptime(val, '%d.%m.%Y')
             return []
         except ValueError:
             return [
-                'Field {label}. Expected format: DD.MM.YYYY'.format(label=self.label)
+                'Field {label}: Expected format: DD.MM.YYYY'.format(label=self.label)
             ]
 
 
@@ -227,72 +187,52 @@ class GenderField(Field):
 
 
 class ClientIDsField(Field):
-    pass
+    def check_values(self, val):
+        errors = super(ClientIDsField, self).check_values(val)
+        errors.extend(self._check_type(val))
+        return errors
+
+    def _check_type(self, val):
+        if val and not isinstance(val, list):
+            return [
+                'Field {label}. Expected `list` type.'.format(label=self.label)
+            ]
+        else:
+            return []
+
+
+class RequestMeta(type):
+    def __new__(mcs, name, bases, attrs):
+        for n, v in attrs.items():
+            if isinstance(v, Field):
+                v.label = n
+        return super(RequestMeta, mcs).__new__(mcs, name, bases, attrs)
+
+    def __init__(cls, name, bases, attrs):
+        cls.fields = []
+        cls.required_fields = []
+
+        for n, v in attrs.items():
+            if isinstance(v, Field):
+                if v.required:
+                    cls.required_fields.append(n)
+                cls.fields.append(v)
+
+        super(RequestMeta, cls).__init__(name, bases, attrs)
 
 
 class ClientsInterestsRequest(object):
+    __metaclass__ = RequestMeta
+
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
     def __init__(self, arguments):
         self.errors = []
+        self._check_required_fields(arguments)
+
         self.client_ids = arguments.get('client_ids')
         self.date = arguments.get('date')
-
-    def response(self, ctx, store):
-        interests = {}
-        for cid in self.client_ids:
-            interests.update({cid: get_interests(
-                store=store,
-                cid=self.client_ids)
-            })
-        return interests
-
-
-class OnlineScoreRequest(object):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-    def __init__(self, arguments):
-        self.errors = []
-        self.first_name = arguments.get('first_name')
-        self.last_name = arguments.get('last_name')
-        self.email = arguments.get('email')
-        self.phone = arguments.get('phone')
-        self.birthday = arguments.get('birthday')
-        self.gender = arguments.get('gender')
-
-    def response(self, ctx, store):
-        score = get_score(
-            store=store, phone=self.phone, email=self.email,
-            first_name=self.first_name, last_name=self.last_name,
-            birthday=self.birthday, gender=self.gender,
-        )
-        return score
-
-
-class MethodRequest(object):
-    __metaclass__ = FieldMeta
-
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=True)
-
-    def __init__(self, request):
-        self.errors = []
-        self._check_required_fields(request)
-
-        self.account = request.get('account')
-        self.login = request.get('login')
-        self.token = request.get('token')
-        self.arguments = request.get('arguments')
-        self.method = request.get('method')
 
         self._check_fields_errors()
 
@@ -305,27 +245,110 @@ class MethodRequest(object):
         for field in self.fields:
             self.errors.extend(field.errors)
 
+    def response(self, ctx, store):
+        interests = {}
+        for cid in self.client_ids:
+            interests.update({cid: get_interests(
+                store=store,
+                cid=self.client_ids)
+            })
+        return interests
+
+
+class OnlineScoreRequest(object):
+    __metaclass__ = RequestMeta
+
+    first_name = CharField(required=False, nullable=True)
+    last_name = CharField(required=False, nullable=True)
+    email = EmailField(required=False, nullable=True)
+    phone = PhoneField(required=False, nullable=True)
+    birthday = BirthDayField(required=False, nullable=True)
+    gender = GenderField(required=False, nullable=True)
+
+    def __init__(self, arguments):
+        self.errors = []
+        self._check_required_fields(arguments)
+
+        self.first_name = arguments.get('first_name')
+        self.last_name = arguments.get('last_name')
+        self.email = arguments.get('email')
+        self.phone = arguments.get('phone')
+        self.birthday = arguments.get('birthday')
+        self.gender = arguments.get('gender')
+
+        self._check_fields_errors()
+
+    def _check_required_fields(self, request):
+        for required_field in self.required_fields:
+            if required_field not in request:
+                self.errors.extend(['Field {} is required'.format(required_field)])
+
+    def _check_fields_errors(self):
+        for field in self.fields:
+            self.errors.extend(field.errors)
+
+    def response(self, ctx, store):
+        score = get_score(
+            store=store, phone=self.phone, email=self.email,
+            first_name=self.first_name, last_name=self.last_name,
+            birthday=self.birthday, gender=self.gender,
+        )
+        return score
+
+
+class MethodRequest(object):
+    __metaclass__ = RequestMeta
+
+    account = CharField(required=False, nullable=True)
+    login = CharField(required=True, nullable=True)
+    token = CharField(required=True, nullable=True)
+    arguments = ArgumentsField(required=True, nullable=True)
+    method = CharField(required=True, nullable=False)
+
+    def __init__(self, request):
+        self.errors = []
+        self._check_required_fields(request)
+
+        self.account = request.get('account')
+        self.login = request.get('login')
+        self.token = request.get('token')
+        self.arguments = request.get('arguments')
+        self.method = request.get('method')
+        self._check_fields_errors()
+
+        self.response_method = self._set_response_method()
+        self._check_method_errors()
+
+    def _check_required_fields(self, request):
+        for required_field in self.required_fields:
+            if required_field not in request:
+                self.errors.extend(['Field {} is required'.format(required_field)])
+
+    def _check_fields_errors(self):
+        for field in self.fields:
+            self.errors.extend(field.errors)
+
+    def _check_method_errors(self):
+        if self.response_method and self.response_method.errors:
+            self.errors.extend(self.response_method.errors)
+
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
 
-    def get_response(self, ctx, store):
-        if self.method == 'clients_interests':
-            response_method = ClientsInterestsRequest(self.arguments)
-        elif self.method == 'online_score':
-            response_method = OnlineScoreRequest(self.arguments)
-        else:
-            return NOT_FOUND, ERRORS[NOT_FOUND]
+    def _set_response_method(self):
+        response_method = None
+        if not self.errors:
+            if self.method == 'clients_interests':
+                response_method = ClientsInterestsRequest(self.arguments)
+            elif self.method == 'online_score':
+                response_method = OnlineScoreRequest(self.arguments)
+            else:
+                self.errors.extend(['Method "{}" not found'.format(self.method)])
+        return response_method
 
-        if response_method.errors:
-            msg = '{error}. {msg}'.format(
-                error=ERRORS[INVALID_REQUEST],
-                msg='; '.join(response_method.errors)
-            )
-            code, response = INVALID_REQUEST, msg
-        else:
-            code, response = OK, response_method.response(ctx, store)
-        return code, response
+    def get_response(self, ctx, store):
+        return self.response_method.response(ctx, store)
 
 
 def check_auth(request):
@@ -349,7 +372,7 @@ def method_handler(request, ctx, store):
     elif not check_auth(method_req):
         code, response = FORBIDDEN, ERRORS[FORBIDDEN]
     else:
-        code, response = method_req.get_response(ctx=ctx, store=store)
+        code, response = OK, method_req.get_response(ctx=ctx, store=store)
     return response, code
 
 
@@ -416,22 +439,187 @@ if __name__ == "__main__":
     # a = MethodRequest(req)
     # res = method_handler(req, 1, 1)
 
+    valid_token = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
+
     req_list = [
-        # {"account": "horns&hoofs", "login": "admin",
-        #  "method": "clients_interests", "token":
-        #      "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
-        #      "arguments": {"client_ids": [1, 2, 3, 4], "date": "20.07.2017"}},
-        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
-        # {"login": "h&f", "method": "online_score", "token": "", "arguments": {}},
-        # {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}},
-        # {"account": "horns&hoofs", "login": "h&f", "token": "", "arguments": {}},
-        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "arguments": {}},
-        # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", },
-        # {"account": "horns&hoofs", "login": "h&f", "method": "", "token": "", "arguments": {}},
-        # {"account": "horns&hoofs", "login": "h&f", "token": "", "arguments": {}},
-        {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
-        {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "sdd", "arguments": {}},
-        {"account": "horns&hoofs", "login": "admin", "method": "online_score", "token": "", "arguments": {}},
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token":
+            "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            # "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [4, 5, 7, 3],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [411, 254, 23, 64],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            # "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            # "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "asdf",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            # "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            # "arguments": {
+            #     "client_ids": [1, 2, 3, 4],
+            #     "date": "20.07.2017"
+            # }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {}
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                # "client_ids": [1, 2, 3, 4],
+                "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": ""
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                # "date": "20.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "20314.07.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "2007.2017"
+            }
+        },
+        {
+            "account": "horns&hoofs",
+            "login": "admin",
+            "method": "clients_interests",
+            "token": valid_token,
+            "arguments": {
+                "client_ids": [1, 2, 3, 4],
+                "date": "sdaf901.41"
+            }
+        },
         {},
     ]
 
