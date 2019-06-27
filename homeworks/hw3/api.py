@@ -48,20 +48,17 @@ class Field(object):
 
     def __set__(self, obj, val):
         self.errors = []
-        errors = self.check_values(val)
-        if not errors:
+        self.check_values(val)
+        if not self.errors:
             self.value = val
         else:
             self.value = None
-            self.errors.extend(errors)
 
     def __get__(self, obj, owner):
         return self.value
 
     def check_values(self, val):
-        errors = []
-        errors.extend(self._check_nullable(val))
-        return errors
+        self.errors.extend(self._check_nullable(val))
 
     def _check_nullable(self, val):
         if not val and not self.nullable:
@@ -74,9 +71,8 @@ class Field(object):
 
 class CharField(Field):
     def check_values(self, val):
-        errors = super(CharField, self).check_values(val)
-        errors.extend(self._check_type(val))
-        return errors
+        super(CharField, self).check_values(val)
+        self.errors.extend(self._check_type(val))
 
     def _check_type(self, val):
         if val and not isinstance(val, str):
@@ -89,9 +85,8 @@ class CharField(Field):
 
 class ArgumentsField(Field):
     def check_values(self, val):
-        errors = super(ArgumentsField, self).check_values(val)
-        errors.extend(self._check_type(val))
-        return errors
+        super(ArgumentsField, self).check_values(val)
+        self.errors.extend(self._check_type(val))
 
     def _check_type(self, val):
         if val and not isinstance(val, dict):
@@ -104,9 +99,8 @@ class ArgumentsField(Field):
 
 class EmailField(CharField):
     def check_values(self, val):
-        errors = super(EmailField, self).check_values(val)
-        errors.extend(self._check_email(val))
-        return errors
+        super(EmailField, self).check_values(val)
+        self.errors.extend(self._check_email(val))
 
     def _check_email(self, val):
         if val and '@' not in val:
@@ -119,22 +113,21 @@ class EmailField(CharField):
 
 class PhoneField(Field):
     def check_values(self, val):
-        errors = super(PhoneField, self).check_values(val)
-        errors.extend(self._check_type(val))
-        errors.extend(self._check_length(val))
-        errors.extend(self._check_first_char(val))
-        return errors
+        super(PhoneField, self).check_values(val)
+        self.errors.extend(self._check_type(val))
+        self.errors.extend(self._check_length(val))
+        self.errors.extend(self._check_first_char(val))
 
     def _check_type(self, val):
-        if val and not isinstance(val, (int, str)):
+        if val and not isinstance(val, (str, int)):
             return [
-                'Field {label}. Expected string or number'.format(label=self.label)
+                'Field {label}. Expected string or integer'.format(label=self.label)
             ]
         else:
             return []
 
     def _check_length(self, val):
-        if val and len(val) != 11:
+        if not self.errors and val and len(str(val)) != 11:
             return [
                 'Field {label} should be 11 chars length'.format(label=self.label)
             ]
@@ -142,7 +135,7 @@ class PhoneField(Field):
             return []
 
     def _check_first_char(self, val):
-        if val and not str(val).startswith('7'):
+        if not self.errors and val and not str(val).startswith('7'):
             return [
                 'Field {label} should starts with `7`'.format(label=self.label)
             ]
@@ -152,13 +145,12 @@ class PhoneField(Field):
 
 class DateField(Field):
     def check_values(self, val):
-        errors = super(DateField, self).check_values(val)
-        errors.extend(self._check_date_format(val))
-        return errors
+        super(DateField, self).check_values(val)
+        self.errors.extend(self._check_date_format(val))
 
     def _check_date_format(self, val):
         try:
-            if val:
+            if not self.errors and val:
                 datetime.datetime.strptime(val, '%d.%m.%Y')
             return []
         except ValueError:
@@ -169,28 +161,47 @@ class DateField(Field):
 
 class BirthDayField(DateField):
     def check_values(self, val):
-        errors = super(BirthDayField, self).check_values(val)
-        errors.extend(self._check_date_range(val))
-        return errors
+        super(BirthDayField, self).check_values(val)
+        self.errors.extend(self._check_date_range(val))
 
     def _check_date_range(self, val):
-        if val and not str(val).startswith('7'):
+        if not self.errors and val:
+            dt = datetime.datetime.strptime(val, '%d.%m.%Y')
+            curr_date = datetime.datetime.now()
+            if abs((curr_date - dt).days) / 365 > 70:
+                return [
+                    'Field {label}. Age should be lower than 70 years'.format(label=self.label)
+                ]
+        return []
+
+
+class GenderField(Field):
+    def check_values(self, val):
+        super(GenderField, self).check_values(val)
+        self.errors.extend(self._check_gender_range(val))
+
+    def _check_type(self, val):
+        if val and not isinstance(val, int):
             return [
-                'Field {label}. Age should be lower than 70 years'.format(label=self.label)
+                'Field {label}. Value should be type of integer'.format(label=self.label)
+            ]
+        else:
+            return []
+
+    def _check_gender_range(self, val):
+        if not self.errors and val and val not in [0, 1, 2]:
+            return [
+                'Field {label}. Gender value should be 0, 1 or 2'.format(label=self.label)
             ]
         else:
             return []
 
 
-class GenderField(Field):
-    pass
-
-
 class ClientIDsField(Field):
     def check_values(self, val):
-        errors = super(ClientIDsField, self).check_values(val)
-        errors.extend(self._check_type(val))
-        return errors
+        super(ClientIDsField, self).check_values(val)
+        self.errors.extend(self._check_type(val))
+        self.errors.extend(self._check_element_type(val))
 
     def _check_type(self, val):
         if val and not isinstance(val, list):
@@ -199,6 +210,15 @@ class ClientIDsField(Field):
             ]
         else:
             return []
+
+    def _check_element_type(self, val):
+        if not self.errors:
+            for elem in val:
+                if not isinstance(elem, int):
+                    return [
+                        'Field {label}. Should contain only integers.'.format(label=self.label)
+                    ]
+        return []
 
 
 class RequestMeta(type):
@@ -221,19 +241,12 @@ class RequestMeta(type):
         super(RequestMeta, cls).__init__(name, bases, attrs)
 
 
-class ClientsInterestsRequest(object):
+class RequestBaseClass(object):
     __metaclass__ = RequestMeta
 
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
-
-    def __init__(self, arguments):
+    def __init__(self, request):
         self.errors = []
-        self._check_required_fields(arguments)
-
-        self.client_ids = arguments.get('client_ids')
-        self.date = arguments.get('date')
-
+        self._check_required_fields(request)
         self._check_fields_errors()
 
     def _check_required_fields(self, request):
@@ -245,19 +258,31 @@ class ClientsInterestsRequest(object):
         for field in self.fields:
             self.errors.extend(field.errors)
 
-    def response(self, ctx, store):
+    def response(self, ctx, score, is_admin=False):
+        pass
+
+
+class ClientsInterestsRequest(RequestBaseClass):
+    client_ids = ClientIDsField(required=True)
+    date = DateField(required=False, nullable=True)
+
+    def __init__(self, arguments):
+        self.client_ids = arguments.get('client_ids')
+        self.date = arguments.get('date')
+        super(ClientsInterestsRequest, self).__init__(arguments)
+
+    def response(self, ctx, store, is_admin=False):
         interests = {}
         for cid in self.client_ids:
             interests.update({cid: get_interests(
                 store=store,
                 cid=self.client_ids)
             })
+        ctx.update({'nclients': len(self.client_ids)})
         return interests
 
 
-class OnlineScoreRequest(object):
-    __metaclass__ = RequestMeta
-
+class OnlineScoreRequest(RequestBaseClass):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -266,39 +291,50 @@ class OnlineScoreRequest(object):
     gender = GenderField(required=False, nullable=True)
 
     def __init__(self, arguments):
-        self.errors = []
-        self._check_required_fields(arguments)
-
         self.first_name = arguments.get('first_name')
         self.last_name = arguments.get('last_name')
         self.email = arguments.get('email')
         self.phone = arguments.get('phone')
         self.birthday = arguments.get('birthday')
         self.gender = arguments.get('gender')
-
-        self._check_fields_errors()
-
-    def _check_required_fields(self, request):
-        for required_field in self.required_fields:
-            if required_field not in request:
-                self.errors.extend(['Field {} is required'.format(required_field)])
+        super(OnlineScoreRequest, self).__init__(arguments)
+        self.context = self._prepare_context(arguments)
 
     def _check_fields_errors(self):
+        super(OnlineScoreRequest, self)._check_fields_errors()
+        if not self.errors and not (
+                (self.phone is not None and self.email is not None)
+                or (self.first_name is not None and self.last_name is not None)
+                or (self.gender is not None and self.birthday is not None)
+        ):
+            self.errors.extend([
+                'Required one of the next pairs: phone-email, first_name-last_name, gender-birthday'.format()
+            ])
+
+    def _prepare_context(self, arguments):
+        context = []
         for field in self.fields:
-            self.errors.extend(field.errors)
+            ctx_field = arguments.get(field.label)
+            if ctx_field is not None:
+                context.append(field.label)
+        return context
 
-    def response(self, ctx, store):
-        score = get_score(
-            store=store, phone=self.phone, email=self.email,
-            first_name=self.first_name, last_name=self.last_name,
-            birthday=self.birthday, gender=self.gender,
-        )
-        return score
+    def response(self, ctx, store, is_admin=False):
+        if is_admin:
+            score = 42
+        else:
+            score = get_score(
+                store=store, phone=self.phone, email=self.email,
+                first_name=self.first_name, last_name=self.last_name,
+                birthday=self.birthday, gender=self.gender,
+            )
+        ctx.update({
+            'has': self.context
+        })
+        return {'score': score}
 
 
-class MethodRequest(object):
-    __metaclass__ = RequestMeta
-
+class MethodRequest(RequestBaseClass):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -306,31 +342,16 @@ class MethodRequest(object):
     method = CharField(required=True, nullable=False)
 
     def __init__(self, request):
-        self.errors = []
-        self._check_required_fields(request)
-
-        self.account = request.get('account')
-        self.login = request.get('login')
-        self.token = request.get('token')
-        self.arguments = request.get('arguments')
-        self.method = request.get('method')
-        self._check_fields_errors()
+        request_body = request.get('body', {})
+        self.account = request_body.get('account')
+        self.login = request_body.get('login')
+        self.token = request_body.get('token')
+        self.arguments = request_body.get('arguments')
+        self.method = request_body.get('method')
+        super(MethodRequest, self).__init__(request_body)
 
         self.response_method = self._set_response_method()
         self._check_method_errors()
-
-    def _check_required_fields(self, request):
-        for required_field in self.required_fields:
-            if required_field not in request:
-                self.errors.extend(['Field {} is required'.format(required_field)])
-
-    def _check_fields_errors(self):
-        for field in self.fields:
-            self.errors.extend(field.errors)
-
-    def _check_method_errors(self):
-        if self.response_method and self.response_method.errors:
-            self.errors.extend(self.response_method.errors)
 
     @property
     def is_admin(self):
@@ -347,8 +368,12 @@ class MethodRequest(object):
                 self.errors.extend(['Method "{}" not found'.format(self.method)])
         return response_method
 
+    def _check_method_errors(self):
+        if self.response_method and self.response_method.errors:
+            self.errors.extend(self.response_method.errors)
+
     def get_response(self, ctx, store):
-        return self.response_method.response(ctx, store)
+        return self.response_method.response(ctx, store, self.is_admin)
 
 
 def check_auth(request):
@@ -421,212 +446,33 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    # op = OptionParser()
-    # op.add_option("-p", "--port", action="store", type=int, default=8080)
-    # op.add_option("-l", "--log", action="store", default=None)
-    # (opts, args) = op.parse_args()
-    # logging.basicConfig(filename=opts.log, level=logging.INFO,
-    #                     format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
-    # server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
-    # logging.info("Starting server at %s" % opts.port)
-    # try:
-    #     server.serve_forever()
-    # except KeyboardInterrupt:
-    #     pass
-    # server.server_close()
+    op = OptionParser()
+    op.add_option("-p", "--port", action="store", type=int, default=8080)
+    op.add_option("-l", "--log", action="store", default=None)
+    (opts, args) = op.parse_args()
+    logging.basicConfig(filename=opts.log, level=logging.INFO,
+                        format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
+    server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
+    logging.info("Starting server at %s" % opts.port)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    server.server_close()
 
-    # req = {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}}
-    # a = MethodRequest(req)
-    # res = method_handler(req, 1, 1)
+    req = {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}}
+    a = MethodRequest(req)
+    res = method_handler(req, 1, 1)
 
-    valid_token = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
-
-    req_list = [
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token":
-            "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f",
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            # "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [4, 5, 7, 3],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [411, 254, 23, 64],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            # "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            # "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "asdf",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            # "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            # "arguments": {
-            #     "client_ids": [1, 2, 3, 4],
-            #     "date": "20.07.2017"
-            # }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {}
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                # "client_ids": [1, 2, 3, 4],
-                "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": ""
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                # "date": "20.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "20314.07.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "2007.2017"
-            }
-        },
-        {
-            "account": "horns&hoofs",
-            "login": "admin",
-            "method": "clients_interests",
-            "token": valid_token,
-            "arguments": {
-                "client_ids": [1, 2, 3, 4],
-                "date": "sdaf901.41"
-            }
-        },
-        {},
-    ]
-
-    for req in req_list:
-        print(req)
-        res = method_handler(req, 1, 1)
-        print res
-        print('\n')
-
-    print('Done!')
+    # valid_token = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
+    #
+    # req_list = [
+    # ]
+    #
+    # for req in req_list:
+    #     print(req)
+    #     res = method_handler(req, 1, 1)
+    #     print res
+    #     print('\n')
+    #
+    # print('Done!')
