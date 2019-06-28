@@ -70,6 +70,11 @@ class Field(object):
 
 
 class CharField(Field):
+    def __set__(self, obj, val):
+        if self.nullable and not val:
+            val = ''
+        super(CharField, self).__set__(obj, val)
+
     def check_values(self, val):
         super(CharField, self).check_values(val)
         self.errors.extend(self._check_type(val))
@@ -84,6 +89,11 @@ class CharField(Field):
 
 
 class ArgumentsField(Field):
+    def __set__(self, obj, val):
+        if self.nullable and not val:
+            val = {}
+        super(ArgumentsField, self).__set__(obj, val)
+
     def check_values(self, val):
         super(ArgumentsField, self).check_values(val)
         self.errors.extend(self._check_type(val))
@@ -198,6 +208,11 @@ class GenderField(Field):
 
 
 class ClientIDsField(Field):
+    def __set__(self, obj, val):
+        if self.nullable and not val:
+            val = []
+        super(ClientIDsField, self).__set__(obj, val)
+
     def check_values(self, val):
         super(ClientIDsField, self).check_values(val)
         self.errors.extend(self._check_type(val))
@@ -259,7 +274,7 @@ class RequestBaseClass(object):
             self.errors.extend(field.errors)
 
     def response(self, ctx, score, is_admin=False):
-        pass
+        return {}
 
 
 class ClientsInterestsRequest(RequestBaseClass):
@@ -302,11 +317,11 @@ class OnlineScoreRequest(RequestBaseClass):
 
     def _check_fields_errors(self):
         super(OnlineScoreRequest, self)._check_fields_errors()
-        if not self.errors and not (
-                (self.phone is not None and self.email is not None)
-                or (self.first_name is not None and self.last_name is not None)
-                or (self.gender is not None and self.birthday is not None)
-        ):
+        if not self.errors and not any([
+            (self.phone and self.email),
+            (self.first_name and self.last_name),
+            (self.gender is not None and self.birthday)
+        ]):
             self.errors.extend([
                 'Required one of the next pairs: phone-email, first_name-last_name, gender-birthday'.format()
             ])
@@ -358,22 +373,26 @@ class MethodRequest(RequestBaseClass):
         return self.login == ADMIN_LOGIN
 
     def _set_response_method(self):
-        response_method = None
-        if not self.errors:
+        if not self.errors and self.arguments:
             if self.method == 'clients_interests':
-                response_method = ClientsInterestsRequest(self.arguments)
+                return ClientsInterestsRequest(self.arguments)
             elif self.method == 'online_score':
-                response_method = OnlineScoreRequest(self.arguments)
+                return OnlineScoreRequest(self.arguments)
             else:
                 self.errors.extend(['Method "{}" not found'.format(self.method)])
-        return response_method
+                return None
+        else:
+            return None
 
     def _check_method_errors(self):
         if self.response_method and self.response_method.errors:
             self.errors.extend(self.response_method.errors)
 
     def get_response(self, ctx, store):
-        return self.response_method.response(ctx, store, self.is_admin)
+        if self.response_method:
+            return self.response_method.response(ctx, store, self.is_admin)
+        else:
+            return None
 
 
 def check_auth(request):
@@ -396,8 +415,11 @@ def method_handler(request, ctx, store):
         code, response = INVALID_REQUEST, msg
     elif not check_auth(method_req):
         code, response = FORBIDDEN, ERRORS[FORBIDDEN]
-    else:
+    elif method_req.arguments:
         code, response = OK, method_req.get_response(ctx=ctx, store=store)
+    else:
+        code, response = INVALID_REQUEST, ERRORS[INVALID_REQUEST]
+    print (response, code)
     return response, code
 
 
