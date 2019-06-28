@@ -40,6 +40,7 @@ GENDERS = {
 
 
 class Field(object):
+    """Base class for all field types"""
     def __init__(self, value=None, required=False, nullable=False):
         self.label = None
         self.value = value
@@ -47,6 +48,7 @@ class Field(object):
         self.nullable = nullable
 
     def __set__(self, obj, val):
+        # Check errors before set the value
         self.errors = []
         self.check_values(val)
         if not self.errors:
@@ -58,6 +60,9 @@ class Field(object):
         return self.value
 
     def check_values(self, val):
+        # Check value for some properties and restrictions
+        # and extend the errors list:
+        # self.errors.extend(%some_method_to_check_the_value%)
         self.errors.extend(self._check_nullable(val))
 
     def _check_nullable(self, val):
@@ -70,9 +75,10 @@ class Field(object):
 
 
 class CharField(Field):
+    """Char field's base class"""
     def __set__(self, obj, val):
         if self.nullable and not val:
-            val = ''
+            val = ''  # Default value for CharField is empty string
         super(CharField, self).__set__(obj, val)
 
     def check_values(self, val):
@@ -89,9 +95,10 @@ class CharField(Field):
 
 
 class ArgumentsField(Field):
+    """`словарь (объект в терминах json), обязательно, может быть пустым`"""
     def __set__(self, obj, val):
         if self.nullable and not val:
-            val = {}
+            val = {}  # Default value for ArgumentsField is empty dict
         super(ArgumentsField, self).__set__(obj, val)
 
     def check_values(self, val):
@@ -108,12 +115,13 @@ class ArgumentsField(Field):
 
 
 class EmailField(CharField):
+    """"`строка, в которой есть @, опционально, может быть пустым`"""
     def check_values(self, val):
         super(EmailField, self).check_values(val)
         self.errors.extend(self._check_email(val))
 
     def _check_email(self, val):
-        if val and '@' not in val:
+        if not self.errors and val and '@' not in val:
             return [
                 'Field {label} should contain `@` symbol'.format(label=self.label)
             ]
@@ -122,6 +130,7 @@ class EmailField(CharField):
 
 
 class PhoneField(Field):
+    """"`строка или число, длиной 11, начинается с 7, опционально, может быть пустым`"""
     def check_values(self, val):
         super(PhoneField, self).check_values(val)
         self.errors.extend(self._check_type(val))
@@ -154,6 +163,7 @@ class PhoneField(Field):
 
 
 class DateField(Field):
+    """`дата в формате DD.MM.YYYY, опционально, может быть пустым`"""
     def check_values(self, val):
         super(DateField, self).check_values(val)
         self.errors.extend(self._check_date_format(val))
@@ -170,6 +180,7 @@ class DateField(Field):
 
 
 class BirthDayField(DateField):
+    """`дата в формате DD.MM.YYYY, с которой прошло не более 70 лет, опционально, может быть пустым`"""
     def check_values(self, val):
         super(BirthDayField, self).check_values(val)
         self.errors.extend(self._check_date_range(val))
@@ -186,6 +197,7 @@ class BirthDayField(DateField):
 
 
 class GenderField(Field):
+    """`число 0, 1 или 2, опционально, может быть пустым`"""
     def check_values(self, val):
         super(GenderField, self).check_values(val)
         self.errors.extend(self._check_gender_range(val))
@@ -208,9 +220,10 @@ class GenderField(Field):
 
 
 class ClientIDsField(Field):
+    """`массив чисел, обязательное, не пустое`"""
     def __set__(self, obj, val):
         if self.nullable and not val:
-            val = []
+            val = []  # Default value for ClientIDsField is empty list
         super(ClientIDsField, self).__set__(obj, val)
 
     def check_values(self, val):
@@ -238,14 +251,16 @@ class ClientIDsField(Field):
 
 class RequestMeta(type):
     def __new__(mcs, name, bases, attrs):
+        # Set labels for attributes of type `Field`
         for n, v in attrs.items():
             if isinstance(v, Field):
                 v.label = n
         return super(RequestMeta, mcs).__new__(mcs, name, bases, attrs)
 
     def __init__(cls, name, bases, attrs):
-        cls.fields = []
-        cls.required_fields = []
+        # Init the lists with objects with type of `Field`
+        cls.fields = []  # all objects
+        cls.required_fields = []  # required objects
 
         for n, v in attrs.items():
             if isinstance(v, Field):
@@ -265,11 +280,13 @@ class RequestBaseClass(object):
         self._check_fields_errors()
 
     def _check_required_fields(self, request):
+        # Check if all required fields is in request
         for required_field in self.required_fields:
             if required_field not in request:
                 self.errors.extend(['Field {} is required'.format(required_field)])
 
     def _check_fields_errors(self):
+        # iterate through field objects and get its errors
         for field in self.fields:
             self.errors.extend(field.errors)
 
@@ -313,10 +330,11 @@ class OnlineScoreRequest(RequestBaseClass):
         self.birthday = arguments.get('birthday')
         self.gender = arguments.get('gender')
         super(OnlineScoreRequest, self).__init__(arguments)
+
+        self._check_required_pairs_of_fields()
         self.context = self._prepare_context(arguments)
 
-    def _check_fields_errors(self):
-        super(OnlineScoreRequest, self)._check_fields_errors()
+    def _check_required_pairs_of_fields(self):
         if not self.errors and not any([
             (self.phone and self.email),
             (self.first_name and self.last_name),
@@ -419,7 +437,6 @@ def method_handler(request, ctx, store):
         code, response = OK, method_req.get_response(ctx=ctx, store=store)
     else:
         code, response = INVALID_REQUEST, ERRORS[INVALID_REQUEST]
-    print (response, code)
     return response, code
 
 
@@ -486,15 +503,3 @@ if __name__ == "__main__":
     a = MethodRequest(req)
     res = method_handler(req, 1, 1)
 
-    # valid_token = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
-    #
-    # req_list = [
-    # ]
-    #
-    # for req in req_list:
-    #     print(req)
-    #     res = method_handler(req, 1, 1)
-    #     print res
-    #     print('\n')
-    #
-    # print('Done!')
