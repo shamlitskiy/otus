@@ -77,7 +77,7 @@ class Field(object):
 class CharField(Field):
     """Char field's base class"""
     def __set__(self, obj, val):
-        if self.nullable and not val:
+        if self.nullable and val is None:
             val = ''  # Default value for CharField is empty string
         super(CharField, self).__set__(obj, val)
 
@@ -164,6 +164,11 @@ class PhoneField(Field):
 
 class DateField(Field):
     """`дата в формате DD.MM.YYYY, опционально, может быть пустым`"""
+    def __set__(self, obj, val):
+        super(DateField, self).__set__(obj, val)
+        if self.value:
+            self.value = datetime.datetime.strptime(val, '%d.%m.%Y')
+
     def check_values(self, val):
         super(DateField, self).check_values(val)
         self.errors.extend(self._check_date_format(val))
@@ -498,8 +503,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     server.server_close()
-
-    req = {"account": "horns&hoofs", "method": "online_score", "token": "", "arguments": {}}
-    a = MethodRequest(req)
-    res = method_handler(req, 1, 1)
-
