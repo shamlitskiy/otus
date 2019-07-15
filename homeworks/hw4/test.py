@@ -2,24 +2,16 @@ import datetime
 import unittest
 import hashlib
 import functools
+import mock
 
 import api
 from store import Store
-
-
-def set_monkey_store():
-    st = Store()
-    monkeypatch = MonkeyPatch()
-    monkeypatch.setattr(st, 'get', MonkStore.get)
-    monkeypatch.setattr(st, 'cache_get', MonkStore.cache_get)
-    monkeypatch.setattr(st, 'cache_set', MonkStore.cache_set)
 
 
 def cases(cases):
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args):
-            set_monkey_store()
             for c in cases:
                 new_args = args + (c if isinstance(c, tuple) else (c,))
                 f(*new_args)
@@ -27,59 +19,13 @@ def cases(cases):
     return decorator
 
 
-class MonkeypatchPlugin(object):
-    """ setattr-monkeypatching with automatical reversal after test. """
-    def pytest_pyfuncarg_monkeypatch(self, pyfuncitem):
-        monkeypatch = MonkeyPatch()
-        pyfuncitem.addfinalizer(monkeypatch.finalize)
-        return monkeypatch
-
-
-notset = object()
-
-
-class MonkeyPatch(object):
-    def __init__(self):
-        self._setattr = []
-        self._setitem = []
-
-    def setattr(self, obj, name, value):
-        self._setattr.insert(0, (obj, name, getattr(obj, name, notset)))
-        setattr(obj, name, value)
-
-    def setitem(self, dictionary, name, value):
-        self._setitem.insert(0, (dictionary, name, dictionary.get(name, notset)))
-        dictionary[name] = value
-
-    def finalize(self):
-        for obj, name, value in self._setattr:
-            if value is not notset:
-                setattr(obj, name, value)
-            else:
-                delattr(obj, name)
-        for dictionary, name, value in self._setitem:
-            if value is notset:
-                del dictionary[name]
-            else:
-                dictionary[name] = value
-
-
-class MonkStore(object):
-    @staticmethod
-    def get(key):
-        return 1
-
-    @staticmethod
-    def cache_get(key):
-        return 1.5
-
-    @staticmethod
-    def cache_set(key):
-        pass
-
-
 class TestSuite(unittest.TestCase):
     def setUp(self):
+        sq = Store
+        sq.get = mock.MagicMock(return_value=1)
+        sq.cache_get = mock.MagicMock(return_value=1.5)
+        sq.cache_set = mock.MagicMock(return_value=1)
+
         self.context = {}
         self.headers = {}
         self.store = Store()
@@ -178,6 +124,18 @@ class TestSuite(unittest.TestCase):
         _, code = self.get_response(request)
         self.assertEqual(api.INVALID_REQUEST, code)
 
+    @cases([
+        {'arguments': {"phone": "74993432145", "email": "some@mail.ru"}},
+        {'arguments': {"gender": 1, "birthday": "01.01.2010"}},
+        {'arguments': {"first_name": "some", "last_name": "name"}},
+    ])
+    def test_check_required_pairs(self, request):
+        request.update({"account": "acc", "login": "qw", "method": "online_score"})
+
+        self.set_valid_auth(request)
+
+        _, code = self.get_response(request)
+        self.assertEqual(api.OK, code)
 
     @cases([
         {'arguments': {"client_ids": '1, 2, 4'}},
@@ -202,7 +160,7 @@ class TestSuite(unittest.TestCase):
         {'arguments': {"date": 3.0}},
         {'arguments': {"date": [3.0]}},
     ])
-    def test_check_wrong_gender(self, request):
+    def test_check_wrong_date(self, request):
         request.update({"account": "acc", "login": "qw", "method": "clients_interests"})
         request['arguments'].update({
             "client_ids": [1, 2, 4],
