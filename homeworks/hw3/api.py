@@ -178,7 +178,7 @@ class DateField(Field):
             if not self.errors and val:
                 datetime.datetime.strptime(val, '%d.%m.%Y')
             return []
-        except ValueError:
+        except Exception as e:
             return [
                 'Field {label}: Expected format: DD.MM.YYYY'.format(label=self.label)
             ]

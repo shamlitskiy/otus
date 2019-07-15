@@ -130,6 +130,9 @@ class TestSuite(unittest.TestCase):
     @cases([
         {'arguments': {"phone": "69251637831"}},
         {'arguments': {"phone": "1234567891011"}},
+        {'arguments': {"phone": 9341414}},
+        {'arguments': {"phone": 74954348374.9}},
+        {'arguments': {"phone": 7495434837.9}},
     ])
     def test_check_wrong_phone(self, request):
         request.update({"account": "acc", "login": "qw", "method": "online_score"})
@@ -143,13 +146,66 @@ class TestSuite(unittest.TestCase):
         self.assertEqual(api.INVALID_REQUEST, code)
 
     @cases([
-        {'arguments': {"phone": "69251637831"}},
-        {'arguments': {"phone": "1234567891011"}},
+        {'arguments': {"email": "somemail.ru"}},
+        {'arguments': {"email": 341}},
+        {'arguments': {"email": [4, 3]}},
     ])
-    def test_check_wrong_phone(self, request):
+    def test_check_wrong_email(self, request):
         request.update({"account": "acc", "login": "qw", "method": "online_score"})
         request['arguments'].update({
-            "email": "some@mail.ru", "gender": 1, "birthday": "01.01.2010", "first_name": "some", "last_name": "name",
+            "phone": "74993432145", "gender": 1, "birthday": "01.01.2010", "first_name": "some", "last_name": "name",
+        })
+
+        self.set_valid_auth(request)
+
+        _, code = self.get_response(request)
+        self.assertEqual(api.INVALID_REQUEST, code)
+
+    @cases([
+        {'arguments': {"gender": 10}},
+        {'arguments': {"gender": -1}},
+        {'arguments': {"gender": [13, 4]}},
+        {'arguments': {"gender": "1"}},
+    ])
+    def test_check_wrong_gender(self, request):
+        request.update({"account": "acc", "login": "qw", "method": "online_score"})
+        request['arguments'].update({
+            "phone": "74993432145", "email": "some@mail.ru", "birthday": "01.01.2010", "first_name": "some", "last_name": "name",
+        })
+
+        self.set_valid_auth(request)
+
+        _, code = self.get_response(request)
+        self.assertEqual(api.INVALID_REQUEST, code)
+
+
+    @cases([
+        {'arguments': {"client_ids": '1, 2, 4'}},
+        {'arguments': {"client_ids": 14}},
+        {'arguments': {"client_ids": 0.1}},
+        {'arguments': {"client_ids": (1, 6)}},
+    ])
+    def test_check_wrong_client_ids(self, request):
+        request.update({"account": "acc", "login": "qw", "method": "clients_interests"})
+        request['arguments'].update({
+            "date": "01.02.2011",
+        })
+
+        self.set_valid_auth(request)
+
+        _, code = self.get_response(request)
+        self.assertEqual(api.INVALID_REQUEST, code)
+
+    @cases([
+        {'arguments': {"date": 3}},
+        {'arguments': {"date": 'abcs'}},
+        {'arguments': {"date": 3.0}},
+        {'arguments': {"date": [3.0]}},
+    ])
+    def test_check_wrong_gender(self, request):
+        request.update({"account": "acc", "login": "qw", "method": "clients_interests"})
+        request['arguments'].update({
+            "client_ids": [1, 2, 4],
         })
 
         self.set_valid_auth(request)
