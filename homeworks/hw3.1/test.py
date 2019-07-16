@@ -4,7 +4,7 @@ import hashlib
 import functools
 import mock
 
-import api
+from homeworks.hw3 import api
 from store import Store
 
 
