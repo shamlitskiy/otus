@@ -205,6 +205,7 @@ class GenderField(Field):
     """`число 0, 1 или 2, опционально, может быть пустым`"""
     def check_values(self, val):
         super(GenderField, self).check_values(val)
+        self.errors.extend(self._check_type(val))
         self.errors.extend(self._check_gender_range(val))
 
     def _check_type(self, val):
